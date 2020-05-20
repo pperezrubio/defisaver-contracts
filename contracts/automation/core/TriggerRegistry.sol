@@ -15,7 +15,7 @@ contract TriggerRegistry is StrategyData, AdminAuth {
 
     mapping (address => TriggerMetaData) public registredTriggers;
 
-    function isTriggerActive(Trigger[] memory triggers) public returns (bool) {
+    function triggersActivated(Trigger[] memory triggers) public returns (bool) {
         for(uint i = 0; i < triggers.length; ++i) {
             require(isRegistred(triggers[i].contractAddr), "Trigger contract not active/registred");
 

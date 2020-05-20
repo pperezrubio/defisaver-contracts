@@ -15,7 +15,7 @@ contract StrategyData {
 
     struct Strategy {
         Trigger[] triggers;
-        Action[] action;
+        Action[] actions;
         bool active;
     }
 }
