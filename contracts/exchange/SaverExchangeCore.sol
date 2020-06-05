@@ -20,7 +20,7 @@ contract SaverExchangeCore is SaverExchangeHelper {
         ExchangeType exchangeType;
         address exchangeAddr;
         bytes callData;
-        uint256 price0x;
+        uint price0x;
     }
 
     /// @notice Internal method that preforms a sell on 0x/on-chain

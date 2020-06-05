@@ -27,7 +27,7 @@ contract CompoundImportTaker is CompoundSaverHelper, ProxyPermission, GasBurner 
     /// @dev User must approve COMPOUND_IMPORT_FLASH_LOAN to pull _cCollateralToken
     /// @param _cCollateralToken Collateral we are moving to DSProxy
     /// @param _cBorrowToken Borrow token we are moving to DSProxy
-    function importLoan(address _cCollateralToken, address _cBorrowToken) external burnGas(0) {
+    function importLoan(address _cCollateralToken, address _cBorrowToken) external burnGas(15) {
         address proxy = getProxy();
 
         uint loanAmount = CTokenInterface(_cBorrowToken).borrowBalanceCurrent(address(this));

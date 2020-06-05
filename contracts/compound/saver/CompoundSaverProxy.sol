@@ -1,97 +1,88 @@
 pragma solidity ^0.6.0;
+pragma experimental ABIEncoderV2;
 
-import "../../mcd/saver_proxy/ExchangeHelper.sol";
+import "../../exchange/SaverExchangeCore.sol";
 import "../../loggers/CompoundLogger.sol";
 import "../helpers/CompoundSaverHelper.sol";
 
 /// @title Contract that implements repay/boost functionality
-contract CompoundSaverProxy is CompoundSaverHelper, ExchangeHelper {
+contract CompoundSaverProxy is CompoundSaverHelper, SaverExchangeCore {
 
     /// @notice Withdraws collateral, converts to borrowed token and repays debt
     /// @dev Called through the DSProxy
-    /// @param _data Amount and exchange data for the repay [amount, minPrice, exchangeType, gasCost, 0xPrice]
-    /// @param _addrData Coll/Debt addresses [cCollAddress, cBorrowAddress, exchangeAddress]
-    /// @param _callData 0x calldata info
     function repay(
-        uint[5] memory _data, // amount, minPrice, exchangeType, gasCost, 0xPrice
-        address[3] memory _addrData, // cCollAddress, cBorrowAddress, exchangeAddress
-        bytes memory _callData
+        SaverExchangeCore.ExchangeData memory _exchangeData,
+        address _cCollAddress,
+        address _cBorrowAddress,
+        uint gasCost
+        // uint[5] memory _data, // amount, minPrice, exchangeType, gasCost, 0xPrice
+        // address[3] memory _addrData, // cCollAddress, cBorrowAddress, exchangeAddress
+        // bytes memory _callData
     ) public payable {
-        enterMarket(_addrData[0], _addrData[1]);
+        enterMarket(_cCollAddress, _cBorrowAddress);
 
         address payable user = address(uint160(getUserAddress()));
 
-        uint maxColl = getMaxCollateral(_addrData[0], address(this));
+        uint maxColl = getMaxCollateral(_cCollAddress, address(this));
 
-        uint collAmount = (_data[0] > maxColl) ? maxColl : _data[0];
+        uint collAmount = (_exchangeData.srcAmount > maxColl) ? maxColl : _exchangeData.srcAmount;
 
-        require(CTokenInterface(_addrData[0]).redeemUnderlying(collAmount) == 0);
+        require(CTokenInterface(_cCollAddress).redeemUnderlying(collAmount) == 0);
 
-        address collToken = getUnderlyingAddr(_addrData[0]);
-        address borrowToken = getUnderlyingAddr(_addrData[1]);
+        address collToken = getUnderlyingAddr(_cCollAddress);
+        address borrowToken = getUnderlyingAddr(_cBorrowAddress);
 
-        uint swapAmount = swap(
-            [collAmount, _data[1], _data[2], _data[4]], // collAmount, minPrice, exchangeType, 0xPrice
-            collToken,
-            borrowToken,
-            _addrData[2],
-            _callData
-        );
+        (, uint swapAmount) = _sell(_exchangeData);
 
-        swapAmount -= getFee(swapAmount, user, _data[3], _addrData[1]);
+        swapAmount -= getFee(swapAmount, user, gasCost, _cBorrowAddress);
 
-        paybackDebt(swapAmount, _addrData[1], borrowToken, user);
+        paybackDebt(swapAmount, _cBorrowAddress, borrowToken, user);
 
         // handle 0x fee
         user.transfer(address(this).balance);
 
-        CompoundLogger(COMPOUND_LOGGER).LogRepay(user, _data[0], swapAmount, collToken, borrowToken);
+        CompoundLogger(COMPOUND_LOGGER).LogRepay(user, _exchangeData.srcAmount, swapAmount, collToken, borrowToken);
     }
 
     /// @notice Borrows token, converts to collateral, and adds to position
     /// @dev Called through the DSProxy
-    /// @param _data Amount and exchange data for the boost [amount, minPrice, exchangeType, gasCost, 0xPrice]
-    /// @param _addrData Coll/Debt addresses [cCollAddress, cBorrowAddress, exchangeAddress]
-    /// @param _callData 0x calldata info
     function boost(
-        uint[5] memory _data, // amount, minPrice, exchangeType, gasCost, 0xPrice
-        address[3] memory _addrData, // cCollAddress, cBorrowAddress, exchangeAddress
-        bytes memory _callData
+        SaverExchangeCore.ExchangeData memory _exchangeData,
+        address _cCollAddress,
+        address _cBorrowAddress,
+        uint gasCost
+        // uint[5] memory _data, // amount, minPrice, exchangeType, gasCost, 0xPrice
+        // address[3] memory _addrData, // cCollAddress, cBorrowAddress, exchangeAddress
+        // bytes memory _callData
     ) public payable {
-        enterMarket(_addrData[0], _addrData[1]);
+        enterMarket(_cCollAddress, _cBorrowAddress);
 
         address payable user = address(uint160(getUserAddress()));
 
-        uint maxBorrow = getMaxBorrow(_addrData[1], address(this));
-        uint borrowAmount = (_data[0] > maxBorrow) ? maxBorrow : _data[0];
+        uint maxBorrow = getMaxBorrow(_cBorrowAddress, address(this));
+        uint borrowAmount = (_exchangeData.srcAmount > maxBorrow) ? maxBorrow : _exchangeData.srcAmount;
 
-        require(CTokenInterface(_addrData[1]).borrow(borrowAmount) == 0);
+        require(CTokenInterface(_cBorrowAddress).borrow(borrowAmount) == 0);
 
-        address collToken = getUnderlyingAddr(_addrData[0]);
-        address borrowToken = getUnderlyingAddr(_addrData[1]);
+        address collToken = getUnderlyingAddr(_cCollAddress);
+        address borrowToken = getUnderlyingAddr(_cBorrowAddress);
 
-        borrowAmount -= getFee(borrowAmount, user, _data[3], _addrData[1]);
+        borrowAmount -= getFee(borrowAmount, user, gasCost, _cBorrowAddress);
 
-        uint swapAmount = swap(
-            [borrowAmount, _data[1], _data[2], _data[4]], // collAmount, minPrice, exchangeType, 0xPrice
-            borrowToken,
-            collToken,
-            _addrData[2],
-            _callData
-        );
+        (, uint swapAmount) = _sell(_exchangeData);
 
-        approveCToken(collToken, _addrData[0]);
+        approveCToken(collToken, _cCollAddress);
 
         if (collToken != ETH_ADDRESS) {
-            require(CTokenInterface(_addrData[0]).mint(swapAmount) == 0);
+            require(CTokenInterface(_cCollAddress).mint(swapAmount) == 0);
         } else {
-            CEtherInterface(_addrData[0]).mint{value: swapAmount}(); // reverts on fail
+            CEtherInterface(_cCollAddress).mint{value: swapAmount}(); // reverts on fail
         }
 
         // handle 0x fee
         user.transfer(address(this).balance);
 
-        CompoundLogger(COMPOUND_LOGGER).LogBoost(user, _data[0], swapAmount, collToken, borrowToken);
+        CompoundLogger(COMPOUND_LOGGER).LogBoost(user, _exchangeData.srcAmount, swapAmount, collToken, borrowToken);
     }
 
 }

@@ -1,5 +1,7 @@
 pragma solidity ^0.6.0;
+pragma experimental ABIEncoderV2;
 
+import "../../exchange/SaverExchangeCore.sol";
 import "../../utils/GasBurner.sol";
 import "../../flashloan/aave/ILendingPool.sol";
 import "./CompoundSaverProxy.sol";
@@ -18,62 +20,61 @@ contract CompoundFlashLoanTaker is CompoundSaverProxy, ProxyPermission, GasBurne
     );
 
     /// @notice Repays the position with it's own fund or with FL if needed
-    /// @param _data Amount and exchange data [amount, minPrice, exchangeType, gasCost, 0xPrice]
-    /// @param _addrData cTokens addreses and exchange [cCollAddress, cBorrowAddress, exchangeAddress]
-    /// @param _callData 0x callData
     function repayWithLoan(
-        uint[5] calldata _data, // amount, minPrice, exchangeType, gasCost, 0xPrice
-        address[3] calldata _addrData, // cCollAddress, cBorrowAddress, exchangeAddress
-        bytes calldata _callData
-    ) external payable burnGas(25) {
-        uint maxColl = getMaxCollateral(_addrData[0], address(this));
+        SaverExchangeCore.ExchangeData memory _exchangeData,
+        address _cCollAddress,
+        address _cBorrowAddress,
+        uint gasCost
+        // uint[5] calldata _data, // amount, minPrice, exchangeType, gasCost, 0xPrice
+        // address[3] calldata _addrData, // cCollAddress, cBorrowAddress, exchangeAddress
+        // bytes memory _callData
+    ) public payable burnGas(25) {
+        uint maxColl = getMaxCollateral(_cCollAddress, address(this));
 
-        if (_data[0] <= maxColl) {
-            repay(_data, _addrData, _callData);
+        if (_exchangeData.srcAmount <= maxColl) {
+            repay(_exchangeData, _cCollAddress, _cBorrowAddress, gasCost);
         } else {
             // 0x fee
             COMPOUND_SAVER_FLASH_LOAN.transfer(msg.value);
 
-            uint loanAmount = (_data[0] - maxColl);
-            bytes memory paramsData = abi.encode(_data, _addrData, _callData, true, address(this));
+            uint loanAmount = (_exchangeData.srcAmount - maxColl);
+            bytes memory paramsData = abi.encode(_exchangeData, _cCollAddress, _cBorrowAddress, gasCost, true, address(this));
 
             givePermission(COMPOUND_SAVER_FLASH_LOAN);
 
-            lendingPool.flashLoan(COMPOUND_SAVER_FLASH_LOAN, getUnderlyingAddr(_addrData[0]), loanAmount, paramsData);
+            lendingPool.flashLoan(COMPOUND_SAVER_FLASH_LOAN, getUnderlyingAddr(_cCollAddress), loanAmount, paramsData);
 
             removePermission(COMPOUND_SAVER_FLASH_LOAN);
 
-            logger.logFlashLoan("CompoundFlashRepay", loanAmount, _data[0], _addrData[0]);
+            logger.logFlashLoan("CompoundFlashRepay", loanAmount, _exchangeData.srcAmount, _cCollAddress);
         }
     }
 
     /// @notice Boosts the position with it's own fund or with FL if needed
-    /// @param _data Amount and exchange data [amount, minPrice, exchangeType, gasCost, 0xPrice]
-    /// @param _addrData cTokens addreses and exchange [cCollAddress, cBorrowAddress, exchangeAddress]
-    /// @param _callData 0x callData
     function boostWithLoan(
-        uint[5] calldata _data, // amount, minPrice, exchangeType, gasCost, 0xPrice
-        address[3] calldata _addrData, // cCollAddress, cBorrowAddress, exchangeAddress
-        bytes calldata _callData
-    ) external payable burnGas(20) {
-        uint maxBorrow = getMaxBorrow(_addrData[1], address(this));
+        SaverExchangeCore.ExchangeData memory _exchangeData,
+        address _cCollAddress,
+        address _cBorrowAddress,
+        uint gasCost
+    ) public payable burnGas(20) {
+        uint maxBorrow = getMaxBorrow(_cBorrowAddress, address(this));
 
-        if (_data[0] <= maxBorrow) {
-            boost(_data, _addrData, _callData);
+        if (_exchangeData.srcAmount <= maxBorrow) {
+            boost(_exchangeData, _cCollAddress, _cBorrowAddress, gasCost);
         } else {
             // 0x fee
             COMPOUND_SAVER_FLASH_LOAN.transfer(msg.value);
 
-            uint loanAmount = (_data[0] - maxBorrow);
-            bytes memory paramsData = abi.encode(_data, _addrData, _callData, false, address(this));
+            uint loanAmount = (_exchangeData.srcAmount - maxBorrow);
+            bytes memory paramsData = abi.encode(_exchangeData, _cCollAddress, _cBorrowAddress, gasCost, false, address(this));
 
             givePermission(COMPOUND_SAVER_FLASH_LOAN);
 
-            lendingPool.flashLoan(COMPOUND_SAVER_FLASH_LOAN, getUnderlyingAddr(_addrData[1]), loanAmount, paramsData);
+            lendingPool.flashLoan(COMPOUND_SAVER_FLASH_LOAN, getUnderlyingAddr(_cBorrowAddress), loanAmount, paramsData);
 
             removePermission(COMPOUND_SAVER_FLASH_LOAN);
 
-            logger.logFlashLoan("CompoundFlashBoost", loanAmount, _data[0], _addrData[1]);
+            logger.logFlashLoan("CompoundFlashBoost", loanAmount, _exchangeData.srcAmount, _cBorrowAddress);
         }
 
     }
